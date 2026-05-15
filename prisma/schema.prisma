@@ -1,0 +1,106 @@
+// Schema Prisma — Lumme Backend
+// Usa SQLite por padrão (dev.db) para desenvolvimento sem setup.
+// Para produção, troque o provider para "postgresql".
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  smartThingsAccount SmartThingsAccount?
+  devices            Device[]
+  goals              Goal[]
+}
+
+/// Tokens OAuth da SmartThings, SEMPRE armazenados criptografados (AES-256-GCM).
+model SmartThingsAccount {
+  id                    String   @id @default(uuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  samsungAccountId      String?
+  accessTokenEncrypted  String
+  refreshTokenEncrypted String
+  tokenExpiresAt        DateTime
+  scopes                String   // scopes separados por vírgula
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+/// Cache local dos dispositivos vindos da SmartThings.
+model Device {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stDeviceId   String                    // ID do dispositivo na SmartThings
+  label        String
+  roomName     String?
+  locationId   String?
+  deviceType   String                    // SWITCH, LIGHT_BULB, THERMOSTAT, OUTLET, SENSOR, UNKNOWN
+  capabilities String                    // JSON serializado (SQLite não tem arrays)
+  isOn         Boolean  @default(false)
+  powerWatts   Float?
+  online       Boolean  @default(true)
+  lastSyncAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  events              DeviceEvent[]
+  consumptionReadings ConsumptionReading[]
+
+  @@unique([userId, stDeviceId])
+  @@index([userId])
+}
+
+/// Eventos brutos recebidos via webhook.
+model DeviceEvent {
+  id         String   @id @default(uuid())
+  deviceId   String
+  device     Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  capability String
+  attribute  String
+  value      String   // JSON
+  eventTime  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([deviceId, eventTime])
+}
+
+/// Leituras de consumo agregadas (hora/dia/mês) — alimenta os gráficos.
+model ConsumptionReading {
+  id            String   @id @default(uuid())
+  deviceId      String
+  device        Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  periodStart   DateTime
+  periodEnd     DateTime
+  granularity   String   // HOUR, DAY, MONTH
+  energyKwh     Float
+  estimatedCost Float?
+  createdAt     DateTime @default(now())
+
+  @@index([deviceId, periodStart])
+}
+
+model Goal {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  targetKwh  Float
+  period     String   // WEEKLY, MONTHLY
+  startsAt   DateTime
+  endsAt     DateTime?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  @@index([userId, isActive])
+}
